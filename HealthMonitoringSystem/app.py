@@ -3,22 +3,15 @@ import sqlite3
 from datetime import datetime
 from pathlib import Path
 
-import joblib
 import pandas as pd
 import streamlit as st
+
+# Import unified ML functions and artifacts from ml_integration.py
+from ml_integration import prepare_ml_input, predict, model, features, encodings
 
 ROOT = Path(__file__).resolve().parent
 DB = ROOT / 'assessment_history.sqlite3'
 st.set_page_config(page_title='Respiratory Health Monitoring', page_icon='🫀', layout='wide')
-
-@st.cache_resource
-def assets():
-    model = joblib.load(ROOT / 'respiratory_model.pkl')
-    order = joblib.load(ROOT / 'feature_order.pkl')
-    enc = joblib.load(ROOT / 'feature_encodings.pkl')
-    if len(order) != 16 or model.n_features_in_ != 16:
-        raise ValueError('Model and feature order must contain 16 features.')
-    return model, order, enc
 
 def database():
     with sqlite3.connect(DB) as db:
@@ -32,15 +25,6 @@ def latest_result():
     with sqlite3.connect(DB) as db:
         return db.execute('SELECT id,created_at,result,payload FROM assessments ORDER BY id DESC LIMIT 1').fetchone()
 
-def binary(value, classes):
-    if value not in ('Yes', 'No'):
-        raise ValueError('An unanswered or uncertain symptom cannot be encoded.')
-    label = 'True' if value == 'Yes' else 'False'
-    classes = [str(x) for x in classes]
-    if label not in classes:
-        raise ValueError(f'Expected category {label} not present in original encoding.')
-    return classes.index(label)
-
 def warnings_for(survey, manual, sensor):
     w = []
     if survey.get('Breathing Difficulty') == 'Severe':
@@ -52,23 +36,6 @@ def warnings_for(survey, manual, sensor):
     if 0 < sensor.get('spo2', 100) < 90:
         w.append('Low reported oxygen saturation: seek immediate medical attention.')
     return w
-
-def prepare(sensor, survey, manual, order, enc):
-    names = ['Dehydration','Medicine Overdose','Acidious','Cold','Cough']
-    b = {name: binary(survey[name], enc[name]) for name in names}
-    values = dict(b)
-    values.update({
-        'Cold .1': b['Cold'], 'Cough.1': b['Cough'],
-        'Type': sum(b.values()),
-        'Temperature': manual['body_temperature_c'] * 9 / 5 + 32,
-        'Heart Rate': sensor['heart_rate'],
-        'Pulse': manual['Pulse'],
-        'BPSYS': manual['BPSYS'], 'BPDIA': manual['BPDIA'],
-        'Respiratory Rate': manual['Respiratory Rate'],
-        'Oxygen Saturation': sensor['spo2'] / 100,
-        'PH': manual['PH'],
-    })
-    return pd.DataFrame([[values[n] for n in order]], columns=order)
 
 database()
 for name in ('sensor_data','survey_data','manual_data'):
@@ -179,13 +146,20 @@ elif page == 'Assessment':
                 st.error('A verified PH input is required.')
             else:
                 try:
-                    model,order,enc=assets()
-                    frame=prepare(sensor,survey,manual,order,enc)
-                    code=int(model.predict(frame)[0])
-                    category={0:'Normal',1:'Mild',2:'Severe',3:'Chronic'}.get(code,f'Class {code}')
-                    payload={'measurements':{**sensor,**manual},'survey':survey,'model_features':frame.iloc[0].to_dict(),'safety_alerts':flags}
-                    save_result(category,payload)
-                    st.success('Assessment generated and saved.')
+                    # Use unified ml_integration functions
+                    dataframe, missing = prepare_ml_input(sensor, survey, manual)
+                    if missing:
+                        st.error(f'Missing required features for model: {missing}')
+                    else:
+                        category = predict(dataframe)
+                        payload = {
+                            'measurements': {**sensor, **manual},
+                            'survey': survey,
+                            'model_features': dataframe.iloc[0].to_dict(),
+                            'safety_alerts': flags
+                        }
+                        save_result(category, payload)
+                        st.success('Assessment generated and saved.')
                 except (OSError,ValueError,KeyError,IndexError,ImportError,AttributeError) as exc:
                     st.error(f'Unable to generate assessment: {exc}')
     else:

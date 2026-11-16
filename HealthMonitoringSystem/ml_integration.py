@@ -68,7 +68,7 @@ def prepare_ml_input(sensor, survey, manual):
         "Oxygen Saturation": sensor["spo2"] / 100,
 
         # Unknown original measurement definition
-        "PH": None
+        "PH": manual["PH"]
     }
 
     missing = [
