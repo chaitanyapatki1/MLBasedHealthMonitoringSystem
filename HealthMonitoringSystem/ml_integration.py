@@ -1,11 +1,14 @@
-
+from pathlib import Path
 import joblib
 import pandas as pd
 
-model = joblib.load("respiratory_model.pkl")
-features = joblib.load("feature_order.pkl")
-encodings = joblib.load("feature_encodings.pkl")
+# Get the directory where ml_integration.py is located
+ROOT = Path(__file__).resolve().parent
 
+# Load assets using absolute paths relative to ROOT
+model = joblib.load(ROOT / "respiratory_model.pkl")
+features = joblib.load(ROOT / "feature_order.pkl")
+encodings = joblib.load(ROOT / "feature_encodings.pkl")
 
 def encode_answer(column, answer):
     """Convert a verified Yes/No answer using saved encodings."""
